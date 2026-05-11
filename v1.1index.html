@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Passerella Panoramica – Baia Domitia</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; font-family: 'Segoe UI', Arial, sans-serif; }
+    body { display: flex; flex-direction: column; }
+    header {
+      background: linear-gradient(135deg, #2d5a27 0%, #4a7c40 100%);
+      color: white;
+      padding: 10px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    }
+    header h1 { font-size: 1.2rem; font-weight: 700; letter-spacing: 0.3px; }
+    header p  { font-size: 0.78rem; opacity: 0.88; margin-top: 2px; }
+    #map { flex: 1; min-height: 0; }
+    .legend {
+      background: white;
+      padding: 10px 14px;
+      border-radius: 6px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.25);
+      font-size: 12px;
+      line-height: 1.9;
+      max-width: 210px;
+    }
+    .legend h4 { margin-bottom: 5px; color: #333; font-size: 13px; }
+    .leg-row { display: flex; align-items: center; gap: 7px; }
+    .leg-box { width: 20px; height: 11px; border-radius: 2px; flex-shrink: 0; }
+    .leg-dot { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+    #qr-box {
+      position: absolute;
+      bottom: 30px;
+      right: 10px;
+      z-index: 900;
+      background: white;
+      padding: 7px 7px 4px;
+      border-radius: 7px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+      text-align: center;
+      pointer-events: none;
+    }
+    #qr-box p { font-size: 9px; color: #555; margin-top: 3px; }
+    .leaflet-popup-content { font-family: 'Segoe UI', Arial, sans-serif; }
+    .popup-title { font-size: 14px; font-weight: 700; margin-bottom: 2px; }
+    .popup-sci { font-size: 12px; color: #666; font-style: italic; }
+    .popup-meta { font-size: 11px; color: #888; margin-top: 2px; }
+    .popup-note { font-size: 11px; color: #555; font-style: italic; margin-top: 2px; }
+    .popup-photos { margin-top: 6px; display: flex; flex-wrap: wrap; gap: 3px; }
+    .popup-photos img { max-width: 190px; max-height: 130px; border-radius: 4px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>🌿 Passerella Panoramica</h1>
+    <p>Baia Domitia, Cellole (CE) &middot; Rilievo botanico</p>
+  </div>
+</header>
+
+<div id="map"></div>
+<div id="qr-box">
+  <div id="qrcode"></div>
+  <p>Scansiona per aprire</p>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script>
+
+/* ============================================================
+   COORDINATE CONVERSION  EPSG:3857 → WGS84
+   ============================================================ */
+function merc2lonlat(x, y) {
+  var lon = (x / 20037508.34) * 180;
+  var lat = Math.atan(Math.exp(y * Math.PI / 20037508.34)) * 360 / Math.PI - 90;
+  return [lon, lat];
+}
+function convCoords(c) {
+  if (!Array.isArray(c)) return c;
+  if (typeof c[0] === 'number') return merc2lonlat(c[0], c[1]);
+  return c.map(convCoords);
+}
+function convFC(fc) {
+  return {
+    type: 'FeatureCollection',
+    features: fc.features.filter(function(f){ return f && f.geometry && f.geometry.coordinates; }).map(function(f){
+      return {
+        type: 'Feature',
+        properties: f.properties,
+        geometry: { type: f.geometry.type, coordinates: convCoords(f.geometry.coordinates) }
+      };
+    })
+  };
+}
+
+/* ============================================================
+   GEODATA  (EPSG:3857)
+   ============================================================ */
+
+var acquaRaw = {"type":"FeatureCollection","name":"Acqua x web","features":[
+{"type":"Feature","properties":{"fid":1,"id":1},"geometry":{"type":"MultiPolygon","coordinates":[[[[1538166.129882809938863,5039451.990234376862645],[1538325.757226559333503,5039582.10664062295109],[1538331.793554684380069,5039576.741015625186265],[1538170.824804685078561,5039446.624609375372529],[1538166.129882809938863,5039451.990234376862645]]]]}},
+{"type":"Feature","properties":{"fid":2,"id":2},"geometry":{"type":"MultiPolygon","coordinates":[[[[1538171.495507809799165,5039433.881249999627471],[1538218.444726559799165,5039468.7578125],[1538241.919335934566334,5039439.246875000186265],[1538197.652929685078561,5039402.358203125186265],[1538171.495507809799165,5039433.881249999627471]]]]}}
+]};
+
+var passerellaRaw = {"type":"FeatureCollection","name":"Passerella x web","features":[
+{"type":"Feature","properties":{"id":1,"TRATTO":"Iniziale"},"geometry":{"type":"MultiPolygon","coordinates":[[[[1538070.994721340946853,5039595.212231402285397],[1538074.342959817266092,5039595.341009805910289],[1538074.986851832130924,5039565.721977130509913],[1538077.17608468211256,5039516.786184014752507],[1538091.084152199095115,5039494.765077113173902],[1538100.613754016347229,5039478.281441536732018],[1538111.044804654316977,5039461.025135544128716],[1538133.967360376846045,5039427.027637167833745],[1538154.185569637920707,5039399.211502134799957],[1538196.939999412512407,5039339.973436784930527],[1538217.029430270195007,5039313.058750569820404],[1538225.142469655256718,5039303.271591946482658],[1538240.209542798809707,5039293.033708913251758],[1538270.987581100314856,5039271.141380414366722],[1538265.707666579866782,5039240.878455724567175],[1538261.71553608844988,5039243.132077776826918],[1538267.510564221069217,5039269.08092596847564],[1538222.180566387949511,5039301.017969897016883],[1538213.037299779476598,5039312.09291254915297],[1538198.48534024762921,5039331.602840594016016],[1538169.041189892683178,5039373.496142937801778],[1538154.167284353869036,5039392.941681782715023],[1538139.422157217282802,5039412.837945035658777],[1538131.391792318085209,5039425.22473952639848],[1538115.552048756973818,5039449.821414488367736],[1538100.098640404641628,5039472.486413405276835],[1538073.055175788234919,5039515.884735194034874],[1538072.411283773370087,5039525.67189381737262],[1538071.381056549726054,5039568.168766785413027],[1538070.994721340946853,5039595.212231402285397]]]]}},
+{"type":"Feature","properties":{"id":2,"TRATTO":"II Tratto"},"geometry":{"type":"MultiPolygon","coordinates":[[[[1538271.273659822065383,5039190.021535765379667],[1538273.769835370359942,5039192.120592476800084],[1538284.26511892513372,5039178.278164436109364],[1538286.818025735672563,5039160.407816761173308],[1538298.391203277045861,5039143.274975500069559],[1538308.716293044621125,5039136.410492741502821],[1538321.083708260441199,5039121.14978313818574],[1538277.173711117822677,5039056.362681411206722],[1538293.966164805460721,5039036.506739551201463],[1538370.439906599698588,5039066.1204585544765],[1538373.541293754708022,5039062.560689049772918],[1538368.454546838765964,5039060.950959012843668],[1538293.739239755552262,5039032.308626129291952],[1538296.008490253938362,5039029.472063005901873],[1538291.356526732444763,5039025.047024534083903],[1538282.846837363671511,5039034.691339151933789],[1538287.49880088516511,5039038.8894525738433],[1538277.854486267315224,5039050.122242541052401],[1538272.862135170958936,5039046.037591643631458],[1538264.579370852094144,5039055.908831311389804],[1538269.79864699835889,5039059.766557158902287],[1538272.975597695913166,5039056.249218886718154],[1538316.999057363485917,5039121.036320613697171],[1538307.46820527035743,5039133.914317193441093],[1538295.044058792060241,5039141.913425200618804],[1538284.094925137702376,5039159.046266462653875],[1538281.1427896481473,5039177.044689258560538],[1538271.273659822065383,5039190.021535765379667]]]]}},
+{"type":"Feature","properties":{"id":3,"TRATTO":"III Tratto"},"geometry":{"type":"MultiPolygon","coordinates":[[[[1538423.346341090509668,5038992.569627054966986],[1538426.533606563229114,5038994.501303097233176],[1538426.823357969755307,5038994.114967889152467],[1538411.981647031614557,5038917.491818141192198],[1538422.283919266425073,5038903.841307430528104],[1538451.548811333719641,5038902.295966595411301],[1538471.348490784643218,5038901.265739372000098],[1538498.842679811874405,5038899.752593137323856],[1538502.448475094046444,5038899.108701121993363],[1538500.548993650591001,5038896.597522265277803],[1538474.11722644791007,5038898.722365913912654],[1538422.380503068678081,5038899.849176939576864],[1538424.634125120006502,5038897.080441276542842],[1538417.486923757009208,5038890.866883334703743],[1538397.4296875,5038913.08115784265101],[1538402.773991221794859,5038918.811796773225069],[1538408.729992357548326,5038919.520077989436686],[1538423.346341090509668,5038992.569627054966986]]]]}},
+{"type":"Feature","properties":{"id":4,"TRATTO":"IV Tratto"},"geometry":{"type":"MultiPolygon","coordinates":[[[[1538561.107037630863488,5038806.066305000334978],[1538564.455276107182726,5038808.191148648969829],[1538571.280531462747604,5038796.246951776556671],[1538574.178045528940856,5038797.663514208979905],[1538575.176078151678666,5038792.190432083792984],[1538572.407342488411814,5038767.304005714133382],[1538565.871838538907468,5038753.862759911455214],[1538563.618216488044709,5038747.681396569125354],[1538561.171426832210273,5038738.538129961118102],[1538558.402691169176251,5038727.7851333161816],[1538558.402691169176251,5038724.758840846829116],[1538559.239750788081437,5038719.994039938785136],[1538568.254238993627951,5038701.128003908321261],[1538585.252988181076944,5038676.788885752670467],[1538610.107219947502017,5038649.616642734967172],[1538616.417361691826954,5038670.800690016709268],[1538620.216324578272179,5038683.614141108468175],[1538633.351721677463502,5038721.861326780170202],[1538636.57118175085634,5038720.509153549559414],[1538622.534335830947384,5038682.712692289613187],[1538613.906182834180072,5038645.109398632310331],[1538617.962702526478097,5038641.052878940477967],[1538617.25442131026648,5038634.034455980174243],[1538622.663114233640954,5038631.072552712634206],[1538628.780088372994214,5038633.26178556215018],[1538629.488369589205831,5038632.424725943244994],[1538622.920671039493755,5038630.428660698235035],[1538621.504108607070521,5038627.531146631576121],[1538610.815501163480803,5038634.420791189186275],[1538608.497489910572767,5038632.875450354069471],[1538596.456709236139432,5038647.105463878251612],[1538602.444904972566292,5038652.063432390801609],[1538583.321312136948109,5038672.989922868087888],[1538567.481568575836718,5038696.298813799396157],[1538559.690475198207423,5038694.10958094894886],[1538552.865219842642546,5038711.816611353307962],[1538559.690475198207423,5038714.456568613648415],[1538556.728571930667385,5038719.092591118998826],[1538554.990063491044566,5038725.338343661278486],[1538559.819253600900993,5038746.200444936752319],[1538563.296270480379462,5038755.794435954652727],[1538569.348855418385938,5038767.706438226625323],[1538568.962520209373906,5038771.247844306752086],[1538570.443471843143925,5038789.727545128203928],[1538561.171426831744611,5038806.146791501902044],[1538561.107037630863488,5038806.066305000334978]]]]}},
+{"type":"Feature","properties":{"id":5,"TRATTO":"NO PASSERELLA"},"geometry":{"type":"MultiPolygon","coordinates":[[[[1538261.742807728936896,5039243.065266163088381],[1538265.699813285609707,5039240.866929743438959],[1538264.012058227090165,5039208.3740991698578],[1538273.769835369894281,5039191.922033057548106],[1538271.273659821832553,5039189.993170133791864],[1538261.053358790464699,5039206.776403035968542],[1538261.742807728936896,5039243.065266163088381]]]]}},
+{"type":"Feature","properties":{"id":6,"TRATTO":"NO PASSERELLA"},"geometry":{"type":"MultiPolygon","coordinates":[[[[1538369.191818824969232,5039061.09974183049053],[1538373.375749431317672,5039062.475474945269525],[1538395.256551950238645,5039035.034305427223444],[1538426.565801163902506,5038994.485205798409879],[1538423.378535691415891,5038992.48914055339992],[1538369.191818824969232,5039061.09974183049053]]]]}},
+{"type":"Feature","properties":{"id":7,"TRATTO":"NO Passerella"},"geometry":{"type":"MultiPolygon","coordinates":[[[[1538500.54899365035817,5038896.517035765573382],[1538502.448475093580782,5038899.108701124787331],[1538564.374789605149999,5038808.062370251864195],[1538561.155329531757161,5038806.00191580504179],[1538500.693869353272021,5038896.468743866309524],[1538500.54899365035817,5038896.517035765573382]]]]}}
+]};
+
+var alberiRaw = {"type":"FeatureCollection","name":"rilievo_alberi x web","features":[
+{"type":"Feature","properties":{"fid":3,"id_albero":172,"data_ril":"2026-03-31","specie":"ALTRO","specie_man":"Pistacia lentiscus, Smilax aspera, Cistus Creticus","nome_com":"Lentisco, Stracciabraghe, Cisto rosso","note":null,"foto_1":"DCIM/JPEG_20260330083311571.jpg","foto_2":"DCIM/JPEG_20260330083335722.jpg","foto_3":"DCIM/JPEG_20260330083427646.jpg","foto_4":null},"geometry":{"type":"Point","coordinates":[1538630.769733244786039,5038725.118883833289146]}},
+{"type":"Feature","properties":{"fid":4,"id_albero":173,"data_ril":"2026-03-31","specie":"ALTRO","specie_man":"Phillyrea angustifolia, Juniperus macrocarpa","nome_com":"Ilatro sottile, Ginepro coccolone","note":null,"foto_1":"DCIM/JPEG_20260330083549397.jpg","foto_2":"DCIM/JPEG_20260330083602190.jpg","foto_3":"DCIM/JPEG_20260330083617400.jpg","foto_4":null},"geometry":{"type":"Point","coordinates":[1538638.507020163116977,5038718.285758935846388]}},
+{"type":"Feature","properties":{"fid":5,"id_albero":174,"data_ril":"2026-03-31","specie":"ALTRO","specie_man":"Macchia di Pancratium maritimum","nome_com":"Giglio di mare","note":null,"foto_1":"DCIM/JPEG_20260330083847763.jpg","foto_2":"DCIM/JPEG_20260330083900142.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538590.464853828772902,5038702.336537722498178]}},
+{"type":"Feature","properties":{"fid":7,"id_albero":6,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Centaurea sphaereocephala","nome_com":"Fiordaliso delle spiagge","note":null,"foto_1":"DCIM/JPEG_20260330084411443.jpg","foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538612.054653274361044,5038690.860878556966782]}},
+{"type":"Feature","properties":{"fid":8,"id_albero":190,"data_ril":"2026-04-30","specie":"ALTRO","specie_man":"Euphorbia segetalis, Medicago littoralis","nome_com":"Euforbia delle scogliere","note":null,"foto_1":"DCIM/JPEG_20260330084606387.jpg","foto_2":"DCIM/JPEG_20260330084623747.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538606.659259711857885,5038673.659156253561378]}},
+{"type":"Feature","properties":{"fid":10,"id_albero":78,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Anthemis maritima","nome_com":"Camomilla marina","note":null,"foto_1":"DCIM/JPEG_20260330085148244.jpg","foto_2":"DCIM/JPEG_20260330085212275.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538620.914460752625018,5038701.067492762580514]}},
+{"type":"Feature","properties":{"fid":11,"id_albero":89,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Phillyirea angustifolia","nome_com":"Ilatro sottile","note":null,"foto_1":"DCIM/JPEG_20260330085350973.jpg","foto_2":"DCIM/JPEG_20260330085417854.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538629.117593421367928,5038697.210134628228843]}},
+{"type":"Feature","properties":{"fid":12,"id_albero":169,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Juniperus macrocarpa, Pancratium maritimum, Silene colorata","nome_com":"Ginepro coccolone, Giglio di mare, Silene colorata","note":null,"foto_1":"DCIM/JPEG_20260330085820503.jpg","foto_2":"DCIM/JPEG_20260330085909193.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538632.238015684997663,5038650.995492606423795]}},
+{"type":"Feature","properties":{"fid":13,"id_albero":181,"data_ril":"2026-04-22","specie":"ALTRO","specie_man":"Juniperus macrocarpa","nome_com":"Ginepro coccolone","note":null,"foto_1":"DCIM/JPEG_20260330090352336.jpg","foto_2":"DCIM/JPEG_20260330090401445.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538564.141851618187502,5038719.752784479409456]}},
+{"type":"Feature","properties":{"fid":14,"id_albero":115,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Phillyrea angustifolia","nome_com":"Ilatro sottile","note":null,"foto_1":"DCIM/JPEG_20260330090654375.jpg","foto_2":"DCIM/JPEG_20260330090724212.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538582.322866296162829,5038777.601467544212937]}},
+{"type":"Feature","properties":{"fid":15,"id_albero":85,"data_ril":"2026-03-30","specie":"Pinus pinaster","specie_man":"Pinus pinaster","nome_com":"Pino marittimo","note":null,"foto_1":"DCIM/JPEG_20260330091416114.jpg","foto_2":"DCIM/JPEG_20260330091452547.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538575.592056222027168,5038792.762342092581093]}},
+{"type":"Feature","properties":{"fid":16,"id_albero":86,"data_ril":"2026-03-30","specie":"Pinus pinaster","specie_man":"Pinus pinaster","nome_com":"Pino marittimo","note":"Secco per metà","foto_1":"DCIM/JPEG_20260330091525372.jpg","foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538563.092935673892498,5038793.554539874196053]}},
+{"type":"Feature","properties":{"fid":17,"id_albero":171,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Agave americana, Agave americana var. variegata","nome_com":"Agave, Agave variegata","note":null,"foto_1":"DCIM/JPEG_20260330091723695.jpg","foto_2":"DCIM/JPEG_20260330091736940.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538572.159199169604108,5038808.254209812730551]}},
+{"type":"Feature","properties":{"fid":18,"id_albero":138,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Pistacia lentiscus, Smilax aspera","nome_com":"Lentisco, Stracciabraghe","note":null,"foto_1":"DCIM/JPEG_20260330092245943.jpg","foto_2":"DCIM/JPEG_20260330092255234.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538545.928650414571166,5038807.109924129210413]}},
+{"type":"Feature","properties":{"fid":19,"id_albero":20,"data_ril":"2026-03-30","specie":"Tamarix gallica","specie_man":null,"nome_com":"Tamerice","note":"Vicino haway lido","foto_1":"DCIM/JPEG_20260330092537046.jpg","foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538518.489387187641114,5038863.116244100034237]}},
+{"type":"Feature","properties":{"fid":20,"id_albero":21,"data_ril":"2026-03-30","specie":"Nerium oleander","specie_man":null,"nome_com":"Oleandro","note":null,"foto_1":"DCIM/JPEG_20260330092727543.jpg","foto_2":"DCIM/JPEG_20260330092743677.jpg","foto_3":"DCIM/JPEG_20260330092754604.jpg","foto_4":null},"geometry":{"type":"Point","coordinates":[1538509.323170828865841,5038873.935384721495211]}},
+{"type":"Feature","properties":{"fid":21,"id_albero":22,"data_ril":"2026-03-30","specie":"Tamarix gallica","specie_man":null,"nome_com":"Tamerice","note":null,"foto_1":"DCIM/JPEG_20260330092926837.jpg","foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538497.602435157168657,5038905.641477371565998]}},
+{"type":"Feature","properties":{"fid":22,"id_albero":129,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Pistacia lentiscus","nome_com":"Lentisco","note":null,"foto_1":"DCIM/JPEG_20260330093102202.jpg","foto_2":"DCIM/JPEG_20260330093125301.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538443.957529582316056,5038897.827653589658439]}},
+{"type":"Feature","properties":{"fid":23,"id_albero":182,"data_ril":"2026-04-22","specie":"ALTRO","specie_man":"Juniperus macrocarpa","nome_com":"Ginepro coccolone","note":null,"foto_1":"DCIM/JPEG_20260330093321229.jpg","foto_2":"DCIM/JPEG_20260330093338636.jpg","foto_3":"DCIM/JPEG_20260330093403841.jpg","foto_4":null},"geometry":{"type":"Point","coordinates":[1538430.133072123164311,5038907.745199157856405]}},
+{"type":"Feature","properties":{"fid":24,"id_albero":25,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Vegetazione Dunale","nome_com":"Vegetazione dunale","note":null,"foto_1":"DCIM/JPEG_20260330093545984.jpg","foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538397.375118579016998,5038931.787733869627118]}},
+{"type":"Feature","properties":{"fid":25,"id_albero":139,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Phillyrea angustifolia, Juniperus macrocarpa","nome_com":"Ilatro sottile, Ginepro coccolone","note":null,"foto_1":"DCIM/JPEG_20260330093701296.jpg","foto_2":"DCIM/JPEG_20260330093714958.jpg","foto_3":"DCIM/JPEG_20260330093731417.jpg","foto_4":null},"geometry":{"type":"Point","coordinates":[1538422.319248341722414,5038943.508469541557133]}},
+{"type":"Feature","properties":{"fid":26,"id_albero":131,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Rahmnus alaternus, Lonicera implexa, Carpobrotus acinaciformis","nome_com":"Alaterno, Caprifoglio mediterraneo, Unghia di strega","note":null,"foto_1":"DCIM/JPEG_20260330094148421.jpg","foto_2":"DCIM/JPEG_20260330094208467.jpg","foto_3":"DCIM/JPEG_20260330094225505.jpg","foto_4":"DCIM/JPEG_20260330095228349.jpg"},"geometry":{"type":"Point","coordinates":[1538414.655690402491018,5038962.441965627484024]}},
+{"type":"Feature","properties":{"fid":27,"id_albero":105,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Phillyrea angustifolia","nome_com":"Ilatro sottile","note":null,"foto_1":"DCIM/JPEG_20260330095001445.jpg","foto_2":"DCIM/JPEG_20260330095012610.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538425.474831022787839,5038964.395421572029591]}},
+{"type":"Feature","properties":{"fid":28,"id_albero":117,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Ficus opuntia","nome_com":"Fico d'India","note":null,"foto_1":"DCIM/JPEG_20260330100105204.jpg","foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538350.187680596252903,5039081.040830816142261]}},
+{"type":"Feature","properties":{"fid":29,"id_albero":33,"data_ril":"2026-03-30","specie":"Pinus pinaster","specie_man":null,"nome_com":"Pino marittimo","note":null,"foto_1":"DCIM/JPEG_20260330100145284.jpg","foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538356.966232038335875,5039079.534486052580178]}},
+{"type":"Feature","properties":{"fid":31,"id_albero":183,"data_ril":"2026-04-22","specie":"ALTRO","specie_man":"Macchia Yucca filamentosa, Yucca gloriosa","nome_com":"Palma d'Adamo, Yucca spagnola","note":null,"foto_1":"DCIM/JPEG_20260330100444504.jpg","foto_2":"DCIM/JPEG_20260330100505280.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538354.895007986808196,5039067.295434838160872]}},
+{"type":"Feature","properties":{"fid":32,"id_albero":124,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Macchia, Phillyrea angustifolia, Pistacia lentiscus, Juniperus macrocarpa, Smilax aspera","nome_com":"Ilatro sottile, Lentisco, Ginepro coccolone, Stracciabraghe","note":null,"foto_1":"DCIM/JPEG_20260330100845637.jpg","foto_2":"DCIM/JPEG_20260330100949984.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538318.554440535139292,5039050.725642425008118]}},
+{"type":"Feature","properties":{"fid":33,"id_albero":184,"data_ril":"2026-04-22","specie":"ALTRO","specie_man":"Macchia Phillyrea angustifolia","nome_com":"Ilatro sottile, Unghie di strega","note":null,"foto_1":"DCIM/JPEG_20260330101121817.jpg","foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538283.392814358696342,5039058.399164290167391]}},
+{"type":"Feature","properties":{"fid":34,"id_albero":128,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Macchia Phillyrea angustifolia","nome_com":"Ilatro sottile","note":null,"foto_1":"DCIM/JPEG_20260330101237178.jpg","foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538289.200001419289038,5039072.379429435357451]}},
+{"type":"Feature","properties":{"fid":35,"id_albero":141,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Macchia Phillyrea latifolia","nome_com":"Ilatro comune","note":null,"foto_1":"DCIM/JPEG_20260330101417718.jpg","foto_2":"DCIM/JPEG_20260330101432430.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538285.11346237664111,5039081.627912532538176]}},
+{"type":"Feature","properties":{"fid":36,"id_albero":43,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Vegetazione Dunale","nome_com":"Vegetazione dunale","note":null,"foto_1":"DCIM/JPEG_20260330101518979.jpg","foto_2":"DCIM/JPEG_20260330101539844.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538290.490487432805821,5039100.017338225618005]}},
+{"type":"Feature","properties":{"fid":37,"id_albero":143,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Agave americana","nome_com":"Agave","note":null,"foto_1":"DCIM/JPEG_20260330101726561.jpg","foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538314.425043497234583,5039110.111816560849547]}},
+{"type":"Feature","properties":{"fid":38,"id_albero":144,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Chamaerops humilis","nome_com":"Palma di San Pietro","note":null,"foto_1":"DCIM/JPEG_20260330101906072.jpg","foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538326.988928792765364,5039102.764212986454368]}},
+{"type":"Feature","properties":{"fid":39,"id_albero":46,"data_ril":"2026-03-30","specie":"Pinus pinaster","specie_man":null,"nome_com":"Pino marittimo","note":null,"foto_1":"DCIM/JPEG_20260330102023901.jpg","foto_2":"DCIM/JPEG_20260330102034874.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538309.548124261200428,5039121.289411638863385]}},
+{"type":"Feature","properties":{"fid":40,"id_albero":189,"data_ril":"2026-04-28","specie":"ALTRO","specie_man":"Pistacia lentiscus, Phillyrea angustifolia","nome_com":"Lentisco, Ilatro sottile","note":null,"foto_1":"DCIM/JPEG_20260330103644163.jpg","foto_2":"DCIM/JPEG_20260330103709257.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538297.937353177228943,5039138.708108871243894]}},
+{"type":"Feature","properties":{"fid":41,"id_albero":149,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Smilax aspera, Phillyrea angustifolia","nome_com":"Stracciabraghe, Ilatro sottile","note":null,"foto_1":"DCIM/JPEG_20260330103836808.jpg","foto_2":"DCIM/JPEG_20260330103849145.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538293.978358907159418,5039157.696718629449606]}},
+{"type":"Feature","properties":{"fid":42,"id_albero":151,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Pistacia lentiscus","nome_com":"Lentisco","note":null,"foto_1":"DCIM/JPEG_20260330103954910.jpg","foto_2":"DCIM/JPEG_20260330104013722.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538277.349764389218763,5039177.256149604916573]}},
+{"type":"Feature","properties":{"fid":43,"id_albero":153,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Phillyrea angustifolia","nome_com":"Ilatro sottile","note":null,"foto_1":"DCIM/JPEG_20260330104107884.jpg","foto_2":"DCIM/JPEG_20260330104117731.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538264.018838735995814,5039198.440353538841009]}},
+{"type":"Feature","properties":{"fid":45,"id_albero":187,"data_ril":"2026-04-28","specie":"Laurus nobilis","specie_man":null,"nome_com":"Alloro","note":null,"foto_1":"DCIM/JPEG_20260330104727307.jpg","foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538269.997206416446716,5039273.33139468729496]}},
+{"type":"Feature","properties":{"fid":46,"id_albero":155,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Rosmarinum officinalis","nome_com":"Rosmarino","note":null,"foto_1":"DCIM/JPEG_20260330104903797.jpg","foto_2":"DCIM/JPEG_20260330104925851.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538256.983717791270465,5039270.374761020764709]}},
+{"type":"Feature","properties":{"fid":47,"id_albero":186,"data_ril":"2026-04-28","specie":"Pinus halepensis","specie_man":null,"nome_com":"Pino d'Aleppo","note":null,"foto_1":"DCIM/JPEG_20260330105001813.jpg","foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538263.841864439891651,5039277.642970631830394]}},
+{"type":"Feature","properties":{"fid":52,"id_albero":59,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Stagno","nome_com":"Area stagno","note":null,"foto_1":"DCIM/JPEG_20260330105850363.jpg","foto_2":"DCIM/JPEG_20260330105911147.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538220.481610794784501,5039443.293399100191891]}},
+{"type":"Feature","properties":{"fid":53,"id_albero":166,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Canale Typha latifolia, Phragmites australis","nome_com":"Tifa, Cannuccia di palude","note":null,"foto_1":"DCIM/JPEG_20260330110158376.jpg","foto_2":"DCIM/JPEG_20260330110222344.jpg","foto_3":"DCIM/JPEG_20260330110255065.jpg","foto_4":null},"geometry":{"type":"Point","coordinates":[1538177.89712540153414,5039456.784266703762114]}},
+{"type":"Feature","properties":{"fid":54,"id_albero":61,"data_ril":"2026-03-30","specie":"Populus alba","specie_man":"Gruppo","nome_com":"Pioppo bianco","note":null,"foto_1":"DCIM/JPEG_20260330110919569.jpg","foto_2":"DCIM/JPEG_20260330110953081.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538246.604268081486225,5039461.079740719869733]}},
+{"type":"Feature","properties":{"fid":56,"id_albero":159,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Pinus pinaster, Pistacia lentiscus","nome_com":"Pino marittimo, Lentisco","note":null,"foto_1":"DCIM/JPEG_20260330111343322.jpg","foto_2":"DCIM/JPEG_20260330111351089.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538094.620048119220883,5039468.476613124832511]}},
+{"type":"Feature","properties":{"fid":57,"id_albero":64,"data_ril":"2026-03-30","specie":"Quercus ilex","specie_man":"Area di nuova piantumazione lecci","nome_com":"Leccio","note":null,"foto_1":"DCIM/JPEG_20260330111532510.jpg","foto_2":"DCIM/JPEG_20260330111542408.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538125.679337684530765,5039475.581805701367557]}},
+{"type":"Feature","properties":{"fid":58,"id_albero":65,"data_ril":"2026-03-30","specie":"Pinus halepensis","specie_man":"area con pini morti","nome_com":"Pino d'Aleppo","note":null,"foto_1":"DCIM/JPEG_20260330111702474.jpg","foto_2":"DCIM/JPEG_20260330111710401.jpg","foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538109.923831655178219,5039502.75768625177443]}},
+{"type":"Feature","properties":{"fid":59,"id_albero":161,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Pistacia lentiscus","nome_com":"Lentisco","note":null,"foto_1":"DCIM/JPEG_20260330111806614.jpg","foto_2":"DCIM/JPEG_20260330111826557.jpg","foto_3":"DCIM/JPEG_20260330111846315.jpg","foto_4":null},"geometry":{"type":"Point","coordinates":[1538080.781668921234086,5039485.474325361661613]}},
+{"type":"Feature","properties":{"fid":60,"id_albero":164,"data_ril":"2026-03-30","specie":"ALTRO","specie_man":"Pistacia lentiscus, Phillyrea angustifolia","nome_com":"Lentisco, Ilatro sottile","note":null,"foto_1":"DCIM/JPEG_20260330111938128.jpg","foto_2":"DCIM/JPEG_20260330111950342.jpg","foto_3":"DCIM/JPEG_20260330112003371.jpg","foto_4":null},"geometry":{"type":"Point","coordinates":[1538065.941547652473673,5039508.631284235976636]}},
+{"type":"Feature","properties":{"fid":62,"id_albero":179,"data_ril":"2026-04-22","specie":"ALTRO","specie_man":"Camomilla Marina","nome_com":"Camomilla marina","note":null,"foto_1":null,"foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538603.995005142875016,5038663.629821659997106]}},
+{"type":"Feature","properties":{"fid":63,"id_albero":185,"data_ril":"2026-04-22","specie":"ALTRO","specie_man":"Rosmarino","nome_com":"Rosmarino","note":null,"foto_1":null,"foto_2":null,"foto_3":null,"foto_4":null},"geometry":{"type":"Point","coordinates":[1538215.875018287217245,5039323.663076826371253]}}
+]};
+
+/* ============================================================
+   MAP INITIALIZATION
+   ============================================================ */
+var map = L.map('map', { zoomControl: true }).setView([41.181, 13.820], 16);
+
+/* Base layers */
+var satellite = L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  { attribution: 'Tiles &copy; Esri &mdash; Source: Esri, USGS, NOAA', maxZoom: 20 }
+);
+var osm = L.tileLayer(
+  'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+  { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors', maxZoom: 20 }
+);
+satellite.addTo(map);
+
+/* ---- ACQUA ---- */
+var acquaLayer = L.geoJSON(convFC(acquaRaw), {
+  style: {
+    color: '#1a6b9a',
+    weight: 1.5,
+    fillColor: '#4fa8d5',
+    fillOpacity: 0.45
+  }
+}).addTo(map);
+
+/* ---- PASSERELLA ---- */
+var styleWalk = {
+  color: '#6B3A1F',
+  weight: 2,
+  fillColor: '#C47A3A',
+  fillOpacity: 0.55
+};
+var styleNoPas = {
+  color: '#777777',
+  weight: 1.5,
+  fillColor: '#aaaaaa',
+  fillOpacity: 0.35,
+  dashArray: '7,5'
+};
+
+var passerellaLayer = L.geoJSON(convFC(passerellaRaw), {
+  style: function(feature) {
+    var t = (feature.properties.TRATTO || '').toUpperCase();
+    return t.indexOf('NO') === 0 ? styleNoPas : styleWalk;
+  },
+  onEachFeature: function(feature, layer) {
+    var t = feature.properties.TRATTO;
+    if (t) {
+      layer.bindPopup('<b>' + t + '</b>');
+    }
+  }
+}).addTo(map);
+
+/* ---- ALBERI / FLORA ---- */
+function getPlantColor(specie) {
+  if (!specie || specie === 'ALTRO') return '#3a9e3a';
+  var s = specie.toLowerCase();
+  if (s.indexOf('pinus') !== -1)         return '#8B5E14';
+  if (s.indexOf('quercus') !== -1)       return '#1B5E20';
+  if (s.indexOf('populus') !== -1)       return '#546E7A';
+  if (s.indexOf('tamarix') !== -1)       return '#E91E8C';
+  if (s.indexOf('nerium') !== -1)        return '#E91E8C';
+  if (s.indexOf('laurus') !== -1)        return '#7CB342';
+  if (s.indexOf('chamaerops') !== -1)    return '#FF8F00';
+  return '#3a9e3a';
+}
+
+var alberiLayer = L.geoJSON(convFC(alberiRaw), {
+  pointToLayer: function(feature, latlng) {
+    var color = getPlantColor(feature.properties.specie);
+    return L.circleMarker(latlng, {
+      radius: 7,
+      fillColor: color,
+      color: '#ffffff',
+      weight: 1.5,
+      fillOpacity: 0.9,
+      opacity: 1
+    });
+  },
+  onEachFeature: function(feature, layer) {
+    var p = feature.properties;
+    var nomeC = p.nome_com || p.specie_man || p.specie || '—';
+    var sciC  = p.specie_man || (p.specie !== 'ALTRO' ? p.specie : '') || '';
+    var photos = '';
+    var keys = ['foto_1','foto_2','foto_3','foto_4'];
+    for (var i = 0; i < keys.length; i++) {
+      if (p[keys[i]]) {
+        photos += '<img src="' + p[keys[i]] + '" onerror="this.style.display=\'none\'" style="max-width:200px;max-height:140px;margin:2px 2px 0 0;border-radius:4px;">';
+      }
+    }
+    var html = '<div class="popup-title">' + nomeC + '</div>';
+    if (sciC) html += '<div class="popup-sci">' + sciC + '</div>';
+    html += '<div class="popup-meta">ID: ' + p.id_albero + ' &middot; ' + (p.data_ril || '') + '</div>';
+    if (p.note) html += '<div class="popup-note">' + p.note + '</div>';
+    if (photos) html += '<div class="popup-photos">' + photos + '</div>';
+    layer.bindPopup(html, { maxWidth: 260 });
+  }
+}).addTo(map);
+
+/* ---- LAYER CONTROL ---- */
+L.control.layers(
+  { 'Satellite (Esri)': satellite, 'OpenStreetMap': osm },
+  { 'Passerella': passerellaLayer, 'Alberi / Flora': alberiLayer, 'Acqua': acquaLayer },
+  { collapsed: false }
+).addTo(map);
+
+/* ---- LEGEND ---- */
+var legend = L.control({ position: 'bottomleft' });
+legend.onAdd = function() {
+  var div = L.DomUtil.create('div', 'legend');
+  div.innerHTML =
+    '<h4>Legenda</h4>' +
+    '<div class="leg-row"><span class="leg-box" style="background:#C47A3A;border:1px solid #6B3A1F"></span>Passerella</div>' +
+    '<div class="leg-row"><span class="leg-box" style="background:#aaa;border:1px dashed #777;"></span>Zona non accessibile</div>' +
+    '<div class="leg-row"><span class="leg-box" style="background:#4fa8d5;border:1px solid #1a6b9a"></span>Acqua</div>' +
+    '<div class="leg-row"><span class="leg-dot" style="background:#3a9e3a;border:1.5px solid #fff"></span>Macchia mediterranea</div>' +
+    '<div class="leg-row"><span class="leg-dot" style="background:#8B5E14;border:1.5px solid #fff"></span>Pino</div>' +
+    '<div class="leg-row"><span class="leg-dot" style="background:#1B5E20;border:1.5px solid #fff"></span>Leccio</div>' +
+    '<div class="leg-row"><span class="leg-dot" style="background:#E91E8C;border:1.5px solid #fff"></span>Tamerice / Oleandro</div>' +
+    '<div class="leg-row"><span class="leg-dot" style="background:#7CB342;border:1.5px solid #fff"></span>Alloro / Rosmarino</div>' +
+    '<div class="leg-row"><span class="leg-dot" style="background:#FF8F00;border:1.5px solid #fff"></span>Palma di San Pietro</div>' +
+    '<div class="leg-row"><span class="leg-dot" style="background:#546E7A;border:1.5px solid #fff"></span>Pioppo bianco</div>';
+  return div;
+};
+legend.addTo(map);
+
+/* ---- QR CODE ---- */
+try {
+  new QRCode(document.getElementById('qrcode'), {
+    text: 'https://federicoabate89.github.io/passerella-panoramica/',
+    width: 90,
+    height: 90,
+    colorDark: '#2d5a27',
+    colorLight: '#ffffff'
+  });
+} catch(e) {
+  document.getElementById('qr-box').style.display = 'none';
+}
+
+</script>
+</body>
+</html>
